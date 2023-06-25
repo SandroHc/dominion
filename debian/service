@@ -1,0 +1,8 @@
+[Unit]
+Description=Dominion
+
+[Service]
+ExecStart=/usr/bin/dominion
+
+[Install]
+WantedBy=multi-user.target

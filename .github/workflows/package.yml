@@ -1,0 +1,92 @@
+# Based on: https://github.com/ebbflow-io/ebbflow/blob/master/.github/workflows/continuous-integration.yml
+
+name: Package
+
+on:
+  push:
+    branches:
+      - 'master'
+
+jobs:
+  build:
+    name: 'Build ${{matrix.os}}'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest ]
+    outputs:
+      app-version: ${{ steps.app-version.outputs.APP_VERSION }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      # When rustup is updated, it tries to replace its binary, which on Windows is somehow locked.
+      # This can result in the CI failure, see: https://github.com/rust-lang/rustup/issues/3029
+      - name: Update rust
+        run: |
+          rustup set auto-self-update disable
+          rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - name: Check app version
+        run: echo "$(cargo pkgid | cut -d# -f2)"
+      - name: Store app version
+        id: app-version
+        run: echo "APP_VERSION=$(cargo pkgid | cut -d# -f2)" >> $GITHUB_OUTPUT
+      - name: Build
+        run: cargo build --release
+      - name: Test
+        run: cargo test --release
+
+  package-deb:
+    name: Package Debian (.deb)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      # When rustup is updated, it tries to replace its binary, which on Windows is somehow locked.
+      # This can result in the CI failure, see: https://github.com/rust-lang/rustup/issues/3029
+      - name: Update rust
+        run: |
+          rustup set auto-self-update disable
+          rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-deb
+        run: cargo install cargo-deb
+      - name: Build package
+        run: cargo deb
+      - name: Upload artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: package-deb
+          path: ./target/debian/*.deb
+
+  update-release-draft:
+    name: 'Update release'
+    needs: [ build, package-deb ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Create release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Token provided by Actions, no need to create your own token
+        with:
+          tag_name: ${{ needs.build.outputs.app-version }}
+          release_name: v${{ needs.build.outputs.app-version }}
+          body: 'CHANGE ME'
+          draft: true
+          prerelease: false
+      - name: Extract built packages
+        uses: actions/download-artifact@v2
+      - name: Upload Debian (.deb)
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./package-deb/dominion_${{ needs.build.outputs.app-version }}_amd64.deb
+          asset_name: 'dominion_${{ needs.build.outputs.app-version }}_amd64.deb'
+          asset_content_type: application/vnd.debian.binary-package
