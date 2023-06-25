@@ -64,29 +64,17 @@ jobs:
   update-release-draft:
     name: 'Update release'
     needs: [ build, package-deb ]
+    permissions:
+      contents: write # Write permission is required to create a GitHub release
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v3
-      - name: Create release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Token provided by Actions, no need to create your own token
-        with:
-          tag_name: ${{ needs.build.outputs.app-version }}
-          release_name: v${{ needs.build.outputs.app-version }}
-          body: 'CHANGE ME'
-          draft: true
-          prerelease: false
       - name: Extract built packages
         uses: actions/download-artifact@v2
-      - name: Upload Debian (.deb)
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create release
+        uses: softprops/action-gh-release@v1
         with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./package-deb/dominion_${{ needs.build.outputs.app-version }}_amd64.deb
-          asset_name: 'dominion_${{ needs.build.outputs.app-version }}_amd64.deb'
-          asset_content_type: application/vnd.debian.binary-package
+          files: |
+            package-deb/*.deb
+          draft: true
