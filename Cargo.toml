@@ -14,7 +14,7 @@ include = ["/debian", "/src", "LICENSE"]
 chrono = "0.4"
 confy = "0.5"
 duration-str = { version = "0.5", default-features = false, features = ["serde"] }
-regex = "1.8"
+regex = { version = "1.8", default-features = false, features = ["std", "perf"] }
 reqwest = { version = "0.11", features = ["json", "brotli", "deflate", "gzip"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -23,6 +23,11 @@ thiserror = "1.0"
 tokio = { version = "1", features = ["rt", "macros", "signal"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
+lettre = { version = "0.10", features = ["tokio1-native-tls"], optional = true }
+
+[features]
+default = ["email"]
+email = ["dep:lettre"]
 
 [profile.release]
 lto = true

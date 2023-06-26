@@ -1,12 +1,15 @@
 use std::sync::Arc;
+use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
+use lettre::message::IntoBody;
+use lettre::transport::smtp::authentication::Credentials;
 
 use similar::TextDiff;
 use tokio::sync::mpsc::Sender;
-use tracing::{error, info};
+use tracing::{error, info, trace};
 
 use watch::Watcher;
 
-use crate::config::{Config, WatchEntry};
+use crate::config::{Config, EmailConfig, WatchEntry};
 use crate::error::DominionError;
 
 mod config;
@@ -15,6 +18,9 @@ mod watch;
 
 #[derive(Debug)]
 pub enum NotificationEvent {
+	Startup {
+		urls: Vec<String>,
+	},
 	Changed {
 		url: String,
 		old: String,
@@ -31,26 +37,51 @@ async fn main() -> Result<(), DominionError> {
 	tracing_subscriber::fmt::init();
 
 	let cfg = load_config().expect("invalid configuration");
+	let urls = cfg.watch.iter().map(|w| w.url.clone()).collect();
 
-	let tx = prepare_notifier();
-
+	let tx = prepare_notifier(cfg.email).await?;
 	for entry in cfg.watch {
 		prepare_watcher(entry, tx.clone())?;
 	}
 
-	info!("Dominion started - notifications will be sent to the email '{}'", cfg.email.send_to);
+	info!("Dominion started");
+	tx.send(NotificationEvent::Startup { urls }).await?;
 
 	shutdown_on_ctrl_c().await?;
 	Ok(())
 }
 
 // TODO: move to `notify` module
-fn prepare_notifier() -> Sender<NotificationEvent> {
+async fn prepare_notifier(mail_cfg: EmailConfig) -> Result<Sender<NotificationEvent>, DominionError> {
 	let (tx, mut rx) = tokio::sync::mpsc::channel::<NotificationEvent>(1);
+
+	let creds = Credentials::new(mail_cfg.smtp_username, mail_cfg.smtp_password);
+	let mailer = AsyncSmtpTransport::<Tokio1Executor>::relay(mail_cfg.smtp_host.as_str())?
+		.credentials(creds)
+		.build();
+	mailer.test_connection().await?;
+
+	let from_addr = mail_cfg.from_address;
+	let to_addr = mail_cfg.to_address;
 
 	tokio::spawn(async move {
 		while let Some(message) = rx.recv().await {
 			match message {
+				NotificationEvent::Startup { urls } => {
+					let mut urls_joined = "".to_string();
+					for url in urls {
+						urls_joined += " - ";
+						urls_joined += url.as_str();
+						urls_joined += ",\n";
+					}
+
+					let subject = "Starting report";
+					let body = format!("Started listening on the following URLs:\n{urls_joined}");
+					let mail = send_email(&mailer, from_addr.clone(), to_addr.clone(), subject, body).await;
+					if let Err(err) = mail {
+						error!("Failed to send started email: {err}");
+					}
+				}
 				NotificationEvent::Changed { url, old, new } => {
 					let diff = TextDiff::from_lines(old.as_str(), new.as_str());
 					info!("Found changes in {url}");
@@ -65,15 +96,48 @@ fn prepare_notifier() -> Sender<NotificationEvent> {
 					// 	};
 					// 	warn!("{}{}", sign, change);
 					// }
+
+					let subject = format!("Changes in {}", url);
+					let body = format!("{subject}\n\n{}", diff.unified_diff());
+					let mail = send_email(&mailer, from_addr.clone(), to_addr.clone(), subject, body).await;
+					match mail {
+						Ok(_) => trace!("Email for changes in {url} sent"),
+						Err(err) => error!("Failed to send email for changes in {url}: {err}"),
+					}
 				}
 				NotificationEvent::Failed { url, reason } => {
 					error!("Failed to fetch {url}: {reason}");
+
+					let subject = format!("Failed to fetch {url}");
+					let body = format!("Failed to fetch {url}:\n\n{reason}");
+					let mail = send_email(&mailer, from_addr.clone(), to_addr.clone(), subject, body).await;
+					if let Err(err) = mail {
+						error!("Failed to send email: {err}");
+					}
 				}
 			}
 		}
 	});
 
-	tx
+	Ok(tx)
+}
+
+async fn send_email<S: Into<String>, B: IntoBody>(
+	mailer: &AsyncSmtpTransport<Tokio1Executor>,
+	from_addr: String,
+	to_addr: String,
+	subject: S,
+	body: B,
+) -> Result<(), DominionError> {
+	let mail = Message::builder()
+		.from(from_addr.parse()?)
+		.to(to_addr.parse()?)
+		.subject(subject)
+		.body(body)?;
+
+	mailer.send(mail).await?;
+
+	Ok(())
 }
 
 /// Loads the app configurations from a file, or creates one with default values if it doesn't exist.

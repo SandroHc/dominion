@@ -15,6 +15,12 @@ pub enum DominionError {
 	HttpRequestFailed { url: String, status: reqwest::StatusCode, body: String },
 	#[error("regex error: {0}")]
 	Regex(#[from] regex::Error),
+	#[error("email error: {0}")]
+	EmailMessage(#[from] lettre::error::Error),
+	#[error("email SMTP error: {0}")]
+	EmailSmtp(#[from] lettre::transport::smtp::Error),
+	#[error("email address error: {0}")]
+	EmailAddress(#[from] lettre::address::AddressError),
 	#[error("thread join error: {0}")]
 	TokioJoin(#[from] tokio::task::JoinError),
 	#[error("channel send error: {0}")]
