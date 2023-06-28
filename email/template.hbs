@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta content="width=device-width, initial-scale=1" name="viewport">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>Dominion</title>
+    <style>
+        /* TODO: Mine */
+        body {
+            font-family: "Roboto", Helvetica, Arial, sans-serif;
+            color: #1f2328;
+            font-size: 14px; /* TODO: change to 1em or remove? */
+            width: 100%;
+            padding: 0;
+            margin: 0;
+        }
+
+        a {
+            text-decoration: underline;
+            color: #f25824;
+        }
+
+        table {
+            width: 100%;
+            border-spacing: 0;
+            border-collapse: collapse;
+        }
+
+        td {
+            padding: 0;
+        }
+
+        .header {
+            line-height: 36px;
+            font-size: 24px;
+            color: white;
+            background: linear-gradient(90deg, #f25824 0%, #ee3d97 100%);
+            text-align: center;
+        }
+
+        .header td {
+            padding: 10px 20px;
+        }
+
+        .content {
+            max-width: 600px;
+            margin: 0 auto;
+            table-layout: fixed !important;
+        }
+
+        .code-block {
+            line-height: 21px;
+            font-family: "Courier New", Courier, "Lucida Sans Typewriter", "Lucida Typewriter", monospace;
+            font-size: 14px; /* TODO: change to ~0.8em? */
+        }
+
+        .code-block td {
+            padding: 0 0.5em;
+        }
+
+        .code-block .line {
+            width: 1%;
+            white-space: nowrap;
+            text-align: right;
+        }
+
+        .code-block .summary {
+            background-color: #ddf4ff;
+        }
+        .code-block .summary .line {
+            background-color: #bbdfff;
+        }
+
+        .code-block .deletion {
+            background-color: #ffebe9;
+        }
+        .code-block .deletion .line {
+            background-color: #ffd7d5;
+        }
+        .code-block .deletion .emphasized {
+            background-color: #ffc1c0;
+        }
+
+        .code-block .addition {
+            background-color: #e6ffec;
+        }
+        .code-block .addition .line {
+            background-color: #ccffd8;
+        }
+        .code-block .addition .emphasized {
+            background-color: #abf2bc;
+        }
+
+        @media only screen and (max-width: 600px) {
+            p, ul li, ol li, a {
+                line-height: 150% !important
+            }
+
+            .content,
+            .content table,
+            .header,
+            .header table {
+                width: 100% !important;
+                max-width: 600px !important;
+            }
+        }
+    </style>
+</head>
+<body>
+<table class="header">
+    <tr>
+        <td>
+            Dominion
+        </td>
+    </tr>
+</table>
+
+<table class="content">
+    {{#if content}}
+        <tr>
+            <td>
+                <p>
+                    {{content}}
+                </p>
+            </td>
+        </tr>
+    {{/if}}
+    {{#if code}}
+        <tr>
+            <td>
+                <table class="code-block">
+                    {{#each code.lines as |l|}}
+                        <tr class="{{l.type}}">
+                            <td class="line">
+                                {{#if l.old_index}}
+                                    {{l.old_index}}
+                                {{/if}}
+                            </td>
+                            <td class="line">
+                                {{#if l.new_index}}
+                                    {{l.new_index}}
+                                {{/if}}
+                            </td>
+                            <td>
+                                {{l.content}}
+                            </td>
+                        </tr>
+                    {{/each}}
+                </table>
+            </td>
+        </tr>
+    {{/if}}
+</table>
+</body>
+</html>

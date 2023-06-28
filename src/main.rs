@@ -1,20 +1,23 @@
 use std::sync::Arc;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
-use lettre::message::IntoBody;
-use lettre::transport::smtp::authentication::Credentials;
+use lettre::message::{IntoBody, SinglePart};
+use serde_json::json;
 
-use similar::TextDiff;
+use similar::{ChangeTag, TextDiff};
 use tokio::sync::mpsc::Sender;
 use tracing::{error, info, trace};
 
 use watch::Watcher;
 
 use crate::config::{Config, EmailConfig, WatchEntry};
+use crate::email::{CodeBlock, CodeBlockLine};
 use crate::error::DominionError;
 
 mod config;
 mod error;
 mod watch;
+#[cfg(feature = "email")]
+mod email;
 
 #[derive(Debug)]
 pub enum NotificationEvent {
@@ -55,14 +58,10 @@ async fn main() -> Result<(), DominionError> {
 async fn prepare_notifier(mail_cfg: EmailConfig) -> Result<Sender<NotificationEvent>, DominionError> {
 	let (tx, mut rx) = tokio::sync::mpsc::channel::<NotificationEvent>(1);
 
-	let creds = Credentials::new(mail_cfg.smtp_username, mail_cfg.smtp_password);
-	let mailer = AsyncSmtpTransport::<Tokio1Executor>::relay(mail_cfg.smtp_host.as_str())?
-		.credentials(creds)
-		.build();
-	mailer.test_connection().await?;
-
+	let mailer = email::mailer(&mail_cfg).await?;
 	let from_addr = mail_cfg.from_address;
 	let to_addr = mail_cfg.to_address;
+	let template_engine = email::template_engine()?;
 
 	tokio::spawn(async move {
 		while let Some(message) = rx.recv().await {
@@ -70,35 +69,93 @@ async fn prepare_notifier(mail_cfg: EmailConfig) -> Result<Sender<NotificationEv
 				NotificationEvent::Startup { urls } => {
 					let mut urls_joined = "".to_string();
 					for url in urls {
-						urls_joined += " - ";
-						urls_joined += url.as_str();
-						urls_joined += ",\n";
+						urls_joined += format!("<li>{url}</li>").as_str();
 					}
 
-					let subject = "Starting report";
-					let body = format!("Started listening on the following URLs:\n{urls_joined}");
+					let content = format!("<p>Started listening on the following URLs:</p><ol>{urls_joined}</ol>");
+					let data = json!({
+						"content": content
+					});
+
+					let Ok(body) = template_engine.render("template", &data) else {
+						error!("Failed to render email template");
+						return;
+					};
+
+					let subject = "Startup report";
 					let mail = send_email(&mailer, from_addr.clone(), to_addr.clone(), subject, body).await;
 					if let Err(err) = mail {
 						error!("Failed to send started email: {err}");
 					}
 				}
 				NotificationEvent::Changed { url, old, new } => {
-					let diff = TextDiff::from_lines(old.as_str(), new.as_str());
 					info!("Found changes in {url}");
-					println!("{}", diff.unified_diff());
 
-					// TODO: create colored diff in HTML format
-					// for change in diff.iter_all_changes() {
-					// 	let sign = match change.tag() {
-					// 		ChangeTag::Delete => "-",
-					// 		ChangeTag::Insert => "+",
-					// 		ChangeTag::Equal => " ",
-					// 	};
-					// 	warn!("{}{}", sign, change);
-					// }
+					let content = format!(r#"The following changes were found in <a target="_blank" href="{url}">{url}</a>"#);
+
+					let diff = TextDiff::from_lines(old.as_str(), new.as_str());
+					let mut lines = vec![];
+					for group in diff.grouped_ops(5) {
+						let (_, start_old_range, start_new_range) = group.first().unwrap().as_tag_tuple();
+						let (_, end_old_range, end_new_range) = group.last().unwrap().as_tag_tuple();
+
+						lines.push(CodeBlockLine {
+							r#type: "summary".to_string(),
+							old_index: None,
+							new_index: None,
+							content: format!("@@ -{},{} +{},{} @@",
+											 start_old_range.start,
+											 end_old_range.end - start_old_range.start,
+											 start_new_range.start,
+											 end_new_range.end - start_new_range.start
+							),
+						});
+
+						for op in group {
+							for change in diff.iter_inline_changes(&op) {
+								let (change_type, sign) = match change.tag() {
+									ChangeTag::Delete => ("deletion", "-"),
+									ChangeTag::Insert => ("addition", "+"),
+									ChangeTag::Equal => ("", "&nbsp;"),
+								};
+
+								let mut line = sign.to_string();
+								change.values().iter()
+									.map(|(emphasized, value)| (emphasized, value.replace(' ', "&nbsp;")))
+									.map(|(emphasized, value)| {
+									if *emphasized {
+										format!(r#"<span class="emphasized">{value}</span>"#)
+									} else {
+										value
+									}
+								})
+									.for_each(|value| line.push_str(value.as_str()));
+
+								lines.push(CodeBlockLine {
+									r#type: change_type.to_string(),
+									old_index: change.old_index(),
+									new_index: change.new_index(),
+									content: line,
+								});
+							}
+						}
+					}
+
+					let code = CodeBlock {
+						lines
+					};
+
+					let data = json!({
+						"content": content,
+						"code": code
+					});
+
+					let Ok(body) = template_engine.render("template", &data) else {
+						error!("Failed to render email template");
+						return;
+					};
 
 					let subject = format!("Changes in {}", url);
-					let body = format!("{subject}\n\n{}", diff.unified_diff());
 					let mail = send_email(&mailer, from_addr.clone(), to_addr.clone(), subject, body).await;
 					match mail {
 						Ok(_) => trace!("Email for changes in {url} sent"),
@@ -108,11 +165,20 @@ async fn prepare_notifier(mail_cfg: EmailConfig) -> Result<Sender<NotificationEv
 				NotificationEvent::Failed { url, reason } => {
 					error!("Failed to fetch {url}: {reason}");
 
-					let subject = format!("Failed to fetch {url}");
-					let body = format!("Failed to fetch {url}:\n\n{reason}");
+					let content = format!("<p>Failed to fetch {url}</p><p>{reason}</p>");
+					let data = json!({
+						"content": content
+					});
+
+					let Ok(body) = template_engine.render("template", &data) else {
+						error!("Failed to render email template");
+						return;
+					};
+
+					let subject = "Startup report";
 					let mail = send_email(&mailer, from_addr.clone(), to_addr.clone(), subject, body).await;
 					if let Err(err) = mail {
-						error!("Failed to send email: {err}");
+						error!("Failed to send failure email: {err}");
 					}
 				}
 			}
@@ -133,7 +199,7 @@ async fn send_email<S: Into<String>, B: IntoBody>(
 		.from(from_addr.parse()?)
 		.to(to_addr.parse()?)
 		.subject(subject)
-		.body(body)?;
+		.singlepart(SinglePart::html(body))?;
 
 	mailer.send(mail).await?;
 
@@ -148,7 +214,6 @@ fn load_config() -> Result<Config, DominionError> {
 	info!("Loading config from '{}'", config_path.display());
 
 	let config = confy::load_path::<Config>(config_path)?;
-	info!("Loaded config: {:?}", config);
 
 	Ok(config)
 }
