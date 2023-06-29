@@ -3,6 +3,7 @@ use reqwest::Client;
 use std::collections::hash_map;
 use std::hash::{Hash, Hasher};
 
+use crate::config::HttpConfig;
 use reqwest::header::CONTENT_TYPE;
 use serde::Serialize;
 use serde_json::ser::PrettyFormatter;
@@ -31,8 +32,15 @@ impl Watcher {
         url: String,
         ignore_patterns: &[String],
         notifier: mpsc::Sender<NotificationEvent>,
+        http_cfg: &HttpConfig,
     ) -> Result<Self, DominionError> {
-        let http_client = Client::builder().user_agent(APP_USER_AGENT).build()?;
+        let mut user_agent = http_cfg.user_agent.clone().unwrap_or_default();
+        if user_agent.is_empty() {
+            user_agent = APP_USER_AGENT.to_string();
+        }
+        debug!("User agent: {user_agent}");
+
+        let http_client = Client::builder().user_agent(user_agent).build()?;
 
         Ok(Self {
             url,
@@ -177,7 +185,8 @@ mod test {
             r#""eventDate": "\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}Z""#.to_string(),
         ];
         let (tx, _) = mpsc::channel::<NotificationEvent>(1);
-        let watcher = Watcher::new("".to_string(), patterns, tx).unwrap();
+        let http_cfg = HttpConfig::default();
+        let watcher = Watcher::new("".to_string(), patterns, tx, &http_cfg).unwrap();
 
         let value = r#"{
 	"key": "value",

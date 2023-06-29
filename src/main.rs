@@ -9,7 +9,7 @@ use tracing::{error, info, trace};
 
 use watch::Watcher;
 
-use crate::config::{Config, EmailConfig, WatchEntry};
+use crate::config::{Config, EmailConfig, HttpConfig, WatchEntry};
 use crate::email::{CodeBlock, CodeBlockLine};
 use crate::error::DominionError;
 
@@ -40,11 +40,14 @@ async fn main() -> Result<(), DominionError> {
     tracing_subscriber::fmt::init();
 
     let cfg = load_config().expect("invalid configuration");
+    let http_cfg = cfg.http;
+    let mail_cfg = cfg.email;
+
     let urls = cfg.watch.iter().map(|w| w.url.clone()).collect();
 
-    let tx = prepare_notifier(cfg.email).await?;
+    let tx = prepare_notifier(mail_cfg).await?;
     for entry in cfg.watch {
-        prepare_watcher(entry, tx.clone())?;
+        prepare_watcher(entry, tx.clone(), &http_cfg)?;
     }
 
     info!("Dominion started");
@@ -231,11 +234,15 @@ fn load_config() -> Result<Config, DominionError> {
     Ok(config)
 }
 
-fn prepare_watcher(entry: WatchEntry, tx: Sender<NotificationEvent>) -> Result<(), DominionError> {
+fn prepare_watcher(
+    entry: WatchEntry,
+    tx: Sender<NotificationEvent>,
+    http_cfg: &HttpConfig,
+) -> Result<(), DominionError> {
     let tx_spawn = tx;
     let tx_inner = tx_spawn.clone();
 
-    let mut watcher = Watcher::new(entry.url, entry.ignore.as_slice(), tx_inner)?;
+    let mut watcher = Watcher::new(entry.url, entry.ignore.as_slice(), tx_inner, &http_cfg)?;
     let interval = Arc::new(entry.interval);
 
     tokio::spawn(async move {

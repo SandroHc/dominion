@@ -3,9 +3,17 @@ use std::time::Duration;
 use duration_str::deserialize_duration;
 use serde::{Deserialize, Serialize, Serializer};
 
+const DEFAULT_SMTP_HOST: &str = "127.0.0.1";
+const DEFAULT_SMTP_PORT: u16 = lettre::transport::smtp::SMTP_PORT;
+
+const fn default_smtp_port() -> u16 {
+    DEFAULT_SMTP_PORT
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     pub notify: Vec<String>,
+    pub http: HttpConfig,
     #[cfg(feature = "email")]
     pub email: EmailConfig,
     pub watch: Vec<WatchEntry>,
@@ -15,6 +23,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             notify: vec!["email".to_string()],
+            http: HttpConfig::default(),
             #[cfg(feature = "email")]
             email: EmailConfig::default(),
             watch: vec![
@@ -33,11 +42,21 @@ impl Default for Config {
     }
 }
 
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct HttpConfig {
+    pub user_agent: Option<String>,
+}
+
 #[cfg(feature = "email")]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EmailConfig {
     pub smtp_host: String,
+    #[serde(default = "default_smtp_port")]
+    pub smtp_port: u16,
+    pub smtp_use_tls: bool,
+    #[serde(default)]
     pub smtp_username: String,
+    #[serde(default)]
     pub smtp_password: String,
     pub from_address: String,
     pub to_address: String,
@@ -47,7 +66,9 @@ pub struct EmailConfig {
 impl Default for EmailConfig {
     fn default() -> Self {
         Self {
-            smtp_host: "".to_string(),
+            smtp_host: DEFAULT_SMTP_HOST.to_string(),
+            smtp_port: DEFAULT_SMTP_PORT,
+            smtp_use_tls: true,
             smtp_username: "".to_string(),
             smtp_password: "".to_string(),
             from_address: "Dominion <dominion@example.com>".to_string(),
