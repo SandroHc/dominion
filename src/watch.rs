@@ -1,20 +1,20 @@
-use regex::Regex;
-use reqwest::Client;
 use std::collections::hash_map;
 use std::hash::{Hash, Hasher};
 
-use crate::config::HttpConfig;
+use regex::Regex;
 use reqwest::header::CONTENT_TYPE;
+use reqwest::Client;
 use serde::Serialize;
 use serde_json::ser::PrettyFormatter;
 use serde_json::Serializer;
 use tokio::sync::mpsc;
 use tracing::{debug, info, trace};
 
-use crate::error::DominionError;
+use crate::config::HttpConfig;
+use crate::error::{DominionAsyncError, DominionRequestError};
 use crate::NotificationEvent;
 
-static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
+static DEFAULT_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
 #[derive(Debug, Clone)]
 pub struct Watcher {
@@ -33,12 +33,12 @@ impl Watcher {
         ignore_patterns: &[String],
         notifier: mpsc::Sender<NotificationEvent>,
         http_cfg: &HttpConfig,
-    ) -> Result<Self, DominionError> {
+    ) -> Result<Self, DominionRequestError> {
         let mut user_agent = http_cfg.user_agent.clone().unwrap_or_default();
         if user_agent.is_empty() {
-            user_agent = APP_USER_AGENT.to_string();
+            user_agent = DEFAULT_USER_AGENT.to_string();
         }
-        debug!("User agent: {user_agent}");
+        trace!("Using user agent: {user_agent}");
 
         let http_client = Client::builder().user_agent(user_agent).build()?;
 
@@ -53,7 +53,7 @@ impl Watcher {
         })
     }
 
-    fn build_mask(ignore_patterns: &[String]) -> Result<Option<Regex>, DominionError> {
+    fn build_mask(ignore_patterns: &[String]) -> Result<Option<Regex>, DominionRequestError> {
         let ignore_mask = if ignore_patterns.is_empty() {
             None
         } else {
@@ -75,7 +75,7 @@ impl Watcher {
         Ok(ignore_mask)
     }
 
-    pub async fn watch(&mut self) -> Result<(), DominionError> {
+    pub async fn watch(&mut self) -> Result<(), DominionAsyncError> {
         if self.previous.is_none() {
             info!("Doing initial fetch of {}", self.url);
         } else {
@@ -93,6 +93,11 @@ impl Watcher {
                 if let Some(prev) = &self.previous {
                     if current_hash == self.previous_hash {
                         debug!("No changes in {}", self.url);
+                        self.notifier
+                            .send(NotificationEvent::NoChanges {
+                                url: self.url.clone(),
+                            })
+                            .await?;
                     } else {
                         self.notifier
                             .send(NotificationEvent::Changed {
@@ -126,12 +131,12 @@ impl Watcher {
         Ok(())
     }
 
-    async fn fetch(&self) -> Result<String, DominionError> {
+    async fn fetch(&self) -> Result<String, DominionRequestError> {
         let res = self.http_client.get(self.url.as_str()).send().await?;
         trace!("Fetched {}: {:?}", self.url, res);
 
         if !res.status().is_success() {
-            return Err(DominionError::HttpRequestFailed {
+            return Err(DominionRequestError::HttpRequestFailed {
                 url: self.url.clone(),
                 status: res.status(),
                 body: res.text().await.unwrap_or_default(),
@@ -151,7 +156,7 @@ impl Watcher {
             let mut ser = Serializer::with_formatter(&mut buf, formatter);
             json.serialize(&mut ser)?;
 
-            String::from_utf8(buf).map_err(|_err| DominionError::InvalidJson(json))?
+            String::from_utf8(buf).map_err(|_err| DominionRequestError::InvalidJson(json))?
         } else {
             res.text().await?
         };

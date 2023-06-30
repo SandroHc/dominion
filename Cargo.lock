@@ -255,6 +255,7 @@ dependencies = [
 name = "dominion"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "chrono",
  "confy",
  "duration-str",

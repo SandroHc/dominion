@@ -15,7 +15,7 @@ pub struct Config {
     pub notify: Vec<String>,
     pub http: HttpConfig,
     #[cfg(feature = "email")]
-    pub email: EmailConfig,
+    pub email: MailConfig,
     pub watch: Vec<WatchEntry>,
 }
 
@@ -25,7 +25,7 @@ impl Default for Config {
             notify: vec!["email".to_string()],
             http: HttpConfig::default(),
             #[cfg(feature = "email")]
-            email: EmailConfig::default(),
+            email: MailConfig::default(),
             watch: vec![
                 WatchEntry {
                     url: "https://example.com".to_string(),
@@ -49,7 +49,7 @@ pub struct HttpConfig {
 
 #[cfg(feature = "email")]
 #[derive(Debug, Serialize, Deserialize)]
-pub struct EmailConfig {
+pub struct MailConfig {
     pub smtp_host: String,
     #[serde(default = "default_smtp_port")]
     pub smtp_port: u16,
@@ -63,7 +63,7 @@ pub struct EmailConfig {
 }
 
 #[cfg(feature = "email")]
-impl Default for EmailConfig {
+impl Default for MailConfig {
     fn default() -> Self {
         Self {
             smtp_host: DEFAULT_SMTP_HOST.to_string(),
