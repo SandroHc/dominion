@@ -7,6 +7,9 @@ pub enum DominionError {
     Async(#[from] DominionAsyncError),
     #[error("request error: {0}")]
     Request(#[from] DominionRequestError),
+    #[cfg(feature = "discord")]
+    #[error("Discord error: {0}")]
+    Discord(#[from] DominionDiscordError),
     #[cfg(feature = "email")]
     #[error("mail error: {0}")]
     Mail(#[from] DominionMailError),
@@ -40,6 +43,13 @@ pub enum DominionRequestError {
     },
     #[error("regex error: {0}")]
     Regex(#[from] regex::Error),
+}
+
+#[cfg(feature = "discord")]
+#[derive(Error, Debug)]
+pub enum DominionDiscordError {
+    #[error("serenity error: {0}")]
+    Serenity(#[from] serenity::Error),
 }
 
 #[cfg(feature = "email")]

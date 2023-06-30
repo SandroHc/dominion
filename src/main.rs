@@ -40,7 +40,7 @@ async fn main() -> Result<(), DominionError> {
 
     let urls = cfg.watch.iter().map(|w| w.url.clone()).collect();
 
-    let tx = notify::prepare_notifier(&cfg.email).await?;
+    let tx = notify::prepare_notifier(&cfg).await?;
     for entry in cfg.watch {
         prepare_watcher(entry, tx.clone(), &cfg.http)?;
     }

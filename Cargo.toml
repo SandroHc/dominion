@@ -15,20 +15,22 @@ async-trait = "0.1"
 chrono = "0.4"
 confy = "0.5"
 duration-str = { version = "0.5", default-features = false, features = ["serde"] }
+handlebars = { version = "4.3", optional = true }
+lettre = { version = "0.10", features = ["tokio1-native-tls"], optional = true }
 regex = { version = "1.8", default-features = false, features = ["std", "perf", "unicode-gencat"] }
 reqwest = { version = "0.11", features = ["json", "brotli", "deflate", "gzip"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serenity = { version = "0.11", default-features = false, features = ["builder", "model", "native_tls_backend"], optional = true }
 similar = { version = "2.2", features = ["inline"] }
 thiserror = "1.0"
 tokio = { version = "1", features = ["rt", "macros", "signal"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
-lettre = { version = "0.10", features = ["tokio1-native-tls"], optional = true }
-handlebars = { version = "4.3", optional = true }
 
 [features]
-default = ["email"]
+default = ["discord", "email"]
+discord = ["dep:serenity"]
 email = ["dep:lettre", "dep:handlebars"]
 
 [profile.release]

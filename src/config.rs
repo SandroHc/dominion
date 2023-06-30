@@ -14,6 +14,8 @@ const fn default_smtp_port() -> u16 {
 pub struct Config {
     pub notify: Vec<String>,
     pub http: HttpConfig,
+    #[cfg(feature = "discord")]
+    pub discord: DiscordConfig,
     #[cfg(feature = "email")]
     pub email: MailConfig,
     pub watch: Vec<WatchEntry>,
@@ -24,6 +26,8 @@ impl Default for Config {
         Self {
             notify: vec!["email".to_string()],
             http: HttpConfig::default(),
+            #[cfg(feature = "discord")]
+            discord: DiscordConfig::default(),
             #[cfg(feature = "email")]
             email: MailConfig::default(),
             watch: vec![
@@ -45,6 +49,13 @@ impl Default for Config {
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct HttpConfig {
     pub user_agent: Option<String>,
+}
+
+#[cfg(feature = "discord")]
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct DiscordConfig {
+    pub token: String,
+    pub owner: u64,
 }
 
 #[cfg(feature = "email")]

@@ -64,7 +64,7 @@ impl<'te> MailEventHandler<'te> {
 
 #[async_trait]
 impl<'te> EventHandler for MailEventHandler<'te> {
-    async fn on_startup(&self, urls: &[String]) {
+    async fn on_startup(&mut self, urls: &[String]) {
         let mut urls_joined = String::new();
         for url in urls {
             urls_joined += format!("<li>{url}</li>").as_str();
@@ -82,12 +82,12 @@ impl<'te> EventHandler for MailEventHandler<'te> {
         }
     }
 
-    async fn on_changed(&self, url: &str, old: &str, new: &str) {
+    async fn on_changed(&mut self, url: &str, old: &str, new: &str) {
         let content = format!(
             r#"The following changes were found in <a target="_blank" href="{url}">{url}</a>"#
         );
-        let diff = TextDiff::from_lines(old, new);
 
+        let diff = TextDiff::from_lines(old, new);
         let mut lines = vec![];
         for group in diff.grouped_ops(5) {
             let (_, start_old_range, start_new_range) = group.first().unwrap().as_tag_tuple();
@@ -153,7 +153,11 @@ impl<'te> EventHandler for MailEventHandler<'te> {
         }
     }
 
-    async fn on_failed(&self, url: &str, reason: &str) {
+    async fn on_no_changes(&mut self, _url: &str) {
+        // TODO: save last update time for each URL and send status email every 1 day - configuration
+    }
+
+    async fn on_failed(&mut self, url: &str, reason: &str) {
         let content = format!("<p>Failed to fetch {url}</p><p>{reason}</p>");
 
         let subject = "Failed report";
