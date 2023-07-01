@@ -57,8 +57,8 @@ impl Default for Config {
                     method: Method::GET,
                     headers: vec![],
                     interval: Duration::from_secs(60 * 10), // 10 minutes
-                    variation: 0.25, // 25% - 1h requests will be in the range of 1h-1h15m
-                    stagger: Duration::from_secs(60),
+                    variation: default_variation(),
+                    stagger: default_stagger(),
                     ignore: vec![],
                 },
             ],
@@ -144,9 +144,12 @@ pub struct WatchEntry {
     )]
     pub interval: Duration,
     /// Variation in time, in percentage, between requests.
+    #[serde(default = "default_variation", skip_serializing_if = "skip_variation")]
     pub variation: f32,
     /// Initial requests will be staggered a random amount between 0s and this value.
     #[serde(
+        default = "default_stagger",
+        skip_serializing_if = "skip_stagger",
         serialize_with = "serialize_duration",
         deserialize_with = "deserialize_duration"
     )]
@@ -201,6 +204,22 @@ where
     D: serde::Deserializer<'de>,
 {
     deserializer.deserialize_any(MethodDeserializer)
+}
+
+fn default_variation() -> f32 {
+    0.0
+}
+
+fn skip_variation(value: &f32) -> bool {
+    *value == default_variation()
+}
+
+fn default_stagger() -> Duration {
+    Duration::from_secs(0)
+}
+
+fn skip_stagger(value: &Duration) -> bool {
+    value.as_secs_f32() == default_stagger().as_secs_f32()
 }
 
 pub fn format_duration(value: &Duration) -> String {
