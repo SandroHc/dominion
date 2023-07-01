@@ -63,7 +63,7 @@ pub struct HttpConfig {
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct DiscordConfig {
     pub token: String,
-    pub owner: u64,
+    pub purge: bool,
 }
 
 #[cfg(feature = "email")]

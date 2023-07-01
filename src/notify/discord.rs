@@ -6,7 +6,7 @@ use serenity::http::Http;
 use serenity::model::channel::{Message, PrivateChannel};
 use serenity::model::id::UserId;
 use similar::{ChangeTag, TextDiff};
-use tracing::error;
+use tracing::{debug, error, info, warn};
 
 use crate::config::DiscordConfig;
 use crate::error::DominionDiscordError;
@@ -14,21 +14,30 @@ use crate::notify::Heartbeat;
 
 pub struct DiscordEventHandler {
     http: Http,
-    dm: PrivateChannel,
+    bot_id: UserId,
+    owner_dm: PrivateChannel,
     status_msg: Option<Message>,
+    purge: bool,
 }
 
 impl DiscordEventHandler {
     pub async fn new(cfg: &DiscordConfig) -> Result<DiscordEventHandler, DominionDiscordError> {
         let http = Http::new(cfg.token.as_str());
 
-        let owner = UserId::from(cfg.owner);
-        let dm = owner.create_dm_channel(&http).await?;
+        let bot_user = http.get_current_user().await?;
+        let bot_app = http.get_current_application_info().await?;
+
+        let owner = bot_app.owner;
+        let owner_dm = owner.create_dm_channel(&http).await?;
+
+        http.set_application_id(bot_app.id.0);
 
         Ok(Self {
             http,
-            dm,
+            bot_id: bot_user.id,
+            owner_dm,
             status_msg: None,
+            purge: cfg.purge,
         })
     }
 
@@ -36,10 +45,56 @@ impl DiscordEventHandler {
     where
         for<'b> M: FnOnce(&'b mut CreateMessage<'msg>) -> &'b mut CreateMessage<'msg>,
     {
-        self.dm
+        self.owner_dm
             .send_message(&self.http, m)
             .await
             .map_err(DominionDiscordError::from)
+    }
+
+    async fn purge_messages(&self) {
+        let last_msg_id = self
+            .status_msg
+            .as_ref()
+            .map(|msg| msg.id)
+            .or(self.owner_dm.last_message_id);
+
+        let last_msg_id = match last_msg_id {
+            None => {
+                info!("No messages to purge");
+                return;
+            }
+            Some(last) => last,
+        };
+
+        debug!("Purging Discord messages older than {last_msg_id}");
+
+        let msgs_to_delete = match self
+            .owner_dm
+            .messages(&self.http, |m| m.before(last_msg_id))
+            .await
+        {
+            Ok(to_delete) => to_delete
+                .iter()
+                .filter(|msg| msg.author.id == self.bot_id)
+                .map(|msg| msg.id)
+                .collect::<Vec<_>>(),
+            Err(err) => {
+                error!(
+                    "Failed to fetch messages older than {last_msg_id} on channel {}: {err}",
+                    self.owner_dm
+                );
+                return;
+            }
+        };
+
+        for msg_id in msgs_to_delete {
+            if let Err(err) = self.owner_dm.id.delete_message(&self.http, msg_id).await {
+                warn!("Failed to purge message {}: {err}", msg_id);
+                return;
+            }
+        }
+
+        info!("Purged all old messages");
     }
 }
 
@@ -58,6 +113,10 @@ impl crate::notify::EventHandler for DiscordEventHandler {
             Err(err) => {
                 error!("Failed to send startup message in Discord: {err}");
             }
+        }
+
+        if self.purge {
+            self.purge_messages().await;
         }
     }
 
