@@ -1,3 +1,5 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use async_trait::async_trait;
 use serenity::builder::CreateMessage;
 use serenity::http::Http;
@@ -8,11 +10,12 @@ use tracing::error;
 
 use crate::config::DiscordConfig;
 use crate::error::DominionDiscordError;
+use crate::notify::Heartbeat;
 
 pub struct DiscordEventHandler {
     http: Http,
     dm: PrivateChannel,
-    _msg: Option<Message>,
+    status_msg: Option<Message>,
 }
 
 impl DiscordEventHandler {
@@ -25,30 +28,37 @@ impl DiscordEventHandler {
         Ok(Self {
             http,
             dm,
-            _msg: None,
+            status_msg: None,
         })
     }
 
-    async fn send<'msg, M>(&self, m: M)
+    async fn send<'msg, M>(&self, m: M) -> Result<Message, DominionDiscordError>
     where
         for<'b> M: FnOnce(&'b mut CreateMessage<'msg>) -> &'b mut CreateMessage<'msg>,
     {
-        if let Err(err) = self.dm.send_message(&self.http, m).await {
-            error!("Failed to send Discord message: {err}");
-        }
+        self.dm
+            .send_message(&self.http, m)
+            .await
+            .map_err(DominionDiscordError::from)
     }
 }
 
 #[async_trait]
 impl crate::notify::EventHandler for DiscordEventHandler {
     async fn on_startup(&mut self, urls: &[String]) {
-        let mut urls_joined = String::new();
+        let mut content = "Started listening on the following URLs:".to_string();
         for url in urls {
-            urls_joined += format!("- {url}").as_str();
+            content += format!("\n- {url}").as_str();
         }
 
-        let content = format!("Started listening on the following URLs:\n{urls_joined}");
-        self.send(|m| m.content(content)).await;
+        match self.send(|m| m.content(content)).await {
+            Ok(msg) => {
+                self.status_msg = Some(msg);
+            }
+            Err(err) => {
+                error!("Failed to send startup message in Discord: {err}");
+            }
+        }
     }
 
     async fn on_changed(&mut self, url: &str, old: &str, new: &str) {
@@ -85,17 +95,68 @@ impl crate::notify::EventHandler for DiscordEventHandler {
 
         content += "```";
 
-        self.send(|m| m.content(content)).await;
-    }
-
-    async fn on_no_changes(&mut self, _url: &str) {
-        // TODO: update status message
-        // let content = format!("No changes for [{url}](url)");
-        // self.send(|m| m.content(content)).await;
+        let result = self.send(|m| m.content(content)).await;
+        if let Err(err) = result {
+            error!("Failed to send on change message in Discord: {err}");
+        } else {
+            self.status_msg = None; // reset status message, so that a new one is sent in the next heartbeat
+        }
     }
 
     async fn on_failed(&mut self, url: &str, reason: &str) {
         let content = format!("Failed to fetch {url}\n\n{reason}");
-        self.send(|m| m.content(content)).await;
+        let result = self.send(|m| m.content(content)).await;
+        if let Err(err) = result {
+            error!("Failed to send failure message in Discord: {err}");
+        } else {
+            self.status_msg = None; // reset status message, so that a new one is sent in the next heartbeat
+        }
+    }
+
+    async fn on_heartbeat(&mut self, status: &Heartbeat) {
+        let epoch = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time went backwards")
+            .as_secs();
+        let mut content = format!("**Last updated <t:{}:R>**\n", epoch);
+        for item in &status.items {
+            content += format!("\n{}\nLast updated ", item.url).as_str();
+
+            match item.last_update {
+                None => content += "never",
+                Some(last_update) => {
+                    content += format!("on <t:{last_update}:R>").as_str();
+                }
+            }
+
+            if let Some(last_change) = item.last_change {
+                content += format!(", changed on <t:{last_change}:R>").as_str();
+            }
+
+            if let Some(last_failure) = item.last_failure {
+                content += format!(", failed on <t:{last_failure}:R>").as_str();
+            }
+
+            content += "\n";
+        }
+
+        let result = match &mut self.status_msg {
+            None => match self.send(|m| m.content(content)).await {
+                Ok(msg) => {
+                    self.status_msg = Some(msg);
+                    None
+                }
+                Err(err) => Some(err),
+            },
+            Some(msg) => msg
+                .edit(&self.http, |m| m.content(content))
+                .await
+                .err()
+                .map(DominionDiscordError::from),
+        };
+
+        if let Some(err) = result {
+            error!("Failed to update status message in Discord: {err}");
+        }
     }
 }

@@ -62,7 +62,7 @@ pub enum DominionMailError {
     #[error("email address error: {0}")]
     EmailAddress(#[from] lettre::address::AddressError),
     #[error("template error: {0}")]
-    HandlebarsTemplate(#[from] handlebars::TemplateError),
+    HandlebarsTemplate(#[from] Box<handlebars::TemplateError>),
     #[error("render error: {0}")]
     HandlebarsRender(#[from] handlebars::RenderError),
 }

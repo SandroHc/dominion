@@ -11,7 +11,7 @@ use tracing::{error, trace};
 
 use crate::config::MailConfig;
 use crate::error::DominionMailError;
-use crate::notify::EventHandler;
+use crate::notify::{EventHandler, Heartbeat};
 
 #[derive(Serialize)]
 struct CodeBlock {
@@ -76,8 +76,8 @@ impl<'te> EventHandler for MailEventHandler<'te> {
         let subject = "Startup report";
         let body = json!({ "content": content });
 
-        let mail = self.send_mail(subject, body).await;
-        if let Err(err) = mail {
+        let result = self.send_mail(subject, body).await;
+        if let Err(err) = result {
             error!("Failed to send started email: {err}");
         }
     }
@@ -146,15 +146,11 @@ impl<'te> EventHandler for MailEventHandler<'te> {
             "code": code
         });
 
-        let mail = self.send_mail(subject, body).await;
-        match mail {
+        let result = self.send_mail(subject, body).await;
+        match result {
             Ok(_) => trace!("Email for changes in {url} sent"),
             Err(err) => error!("Failed to send email for changes in {url}: {err}"),
         }
-    }
-
-    async fn on_no_changes(&mut self, _url: &str) {
-        // TODO: save last update time for each URL and send status email every 1 day - configuration
     }
 
     async fn on_failed(&mut self, url: &str, reason: &str) {
@@ -163,10 +159,14 @@ impl<'te> EventHandler for MailEventHandler<'te> {
         let subject = "Failed report";
         let body = json!({ "content": content });
 
-        let mail = self.send_mail(subject, body).await;
-        if let Err(err) = mail {
+        let result = self.send_mail(subject, body).await;
+        if let Err(err) = result {
             error!("Failed to send failure email: {err}");
         }
+    }
+
+    async fn on_heartbeat(&mut self, _status: &Heartbeat) {
+        // NO-OP
     }
 }
 
@@ -207,7 +207,9 @@ fn create_template_engine<'te>() -> Result<Handlebars<'te>, DominionMailError> {
     let mut handlebars = Handlebars::new();
     handlebars.set_strict_mode(true);
     handlebars.register_escape_fn(no_escape);
-    handlebars.register_template_string("template", include_str!("mail.hbs"))?;
+    handlebars
+        .register_template_string("template", include_str!("mail.hbs"))
+        .map_err(|err| DominionMailError::HandlebarsTemplate(Box::new(err)))?;
 
     Ok(handlebars)
 }
