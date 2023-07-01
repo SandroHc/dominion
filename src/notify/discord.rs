@@ -184,7 +184,7 @@ impl crate::notify::EventHandler for DiscordEventHandler {
             match item.last_update {
                 None => content += "never",
                 Some(last_update) => {
-                    content += format!("on <t:{last_update}:R>").as_str();
+                    content += format!("<t:{last_update}:R>").as_str();
                 }
             }
 

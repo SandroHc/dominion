@@ -3,14 +3,14 @@ use std::hash::{Hash, Hasher};
 
 use regex::Regex;
 use reqwest::header::CONTENT_TYPE;
-use reqwest::Client;
+use reqwest::{Client, Method};
 use serde::Serialize;
 use serde_json::ser::PrettyFormatter;
 use serde_json::Serializer;
 use tokio::sync::mpsc;
 use tracing::{debug, info, trace};
 
-use crate::config::HttpConfig;
+use crate::config::{HttpConfig, WatchEntry};
 use crate::error::{DominionAsyncError, DominionRequestError};
 use crate::NotificationEvent;
 
@@ -19,6 +19,8 @@ static DEFAULT_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CAR
 #[derive(Debug, Clone)]
 pub struct Watcher {
     pub url: String,
+    method: Method,
+    headers: Vec<(String, String)>,
     http_client: Client,
     notifier: mpsc::Sender<NotificationEvent>,
     ignore_mask: Option<Regex>,
@@ -29,11 +31,21 @@ pub struct Watcher {
 
 impl Watcher {
     pub fn new(
-        url: String,
-        ignore_patterns: &[String],
+        entry: &WatchEntry,
         notifier: mpsc::Sender<NotificationEvent>,
         http_cfg: &HttpConfig,
     ) -> Result<Self, DominionRequestError> {
+        let headers = entry
+            .headers
+            .iter()
+            .map(|h| {
+                let (name, value) = h
+                    .split_once('=')
+                    .expect("malformed header; should be 'name=value'");
+                (name.to_string(), value.to_string())
+            })
+            .collect::<Vec<_>>();
+
         let mut user_agent = http_cfg.user_agent.clone().unwrap_or_default();
         if user_agent.is_empty() {
             user_agent = DEFAULT_USER_AGENT.to_string();
@@ -43,10 +55,12 @@ impl Watcher {
         let http_client = Client::builder().user_agent(user_agent).build()?;
 
         Ok(Self {
-            url,
+            url: entry.url.clone(),
+            method: entry.method.clone(),
+            headers,
             http_client,
             notifier,
-            ignore_mask: Self::build_mask(ignore_patterns)?,
+            ignore_mask: Self::build_mask(entry.ignore.as_slice())?,
             last_failed: false,
             previous: None,
             previous_hash: 0,
@@ -132,7 +146,16 @@ impl Watcher {
     }
 
     async fn fetch(&self) -> Result<String, DominionRequestError> {
-        let res = self.http_client.get(self.url.as_str()).send().await?;
+        let mut req = self
+            .http_client
+            .request(self.method.clone(), self.url.as_str());
+
+        for (name, value) in &self.headers {
+            req = req.header(name, value);
+        }
+
+        trace!("Fetching {}: {:?}", self.url, req);
+        let res = req.send().await?;
         trace!("Fetched {}: {:?}", self.url, res);
 
         if !res.status().is_success() {
@@ -184,14 +207,18 @@ mod test {
 
     #[test]
     fn mask() {
-        let patterns = &[
+        let ignore_patterns = vec![
             "foo".to_string(),
             "bar".to_string(),
             r#""eventDate": "\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}Z""#.to_string(),
         ];
+        let entry = WatchEntry {
+            ignore: ignore_patterns,
+            ..WatchEntry::default()
+        };
         let (tx, _) = mpsc::channel::<NotificationEvent>(1);
         let http_cfg = HttpConfig::default();
-        let watcher = Watcher::new("".to_string(), patterns, tx, &http_cfg).unwrap();
+        let watcher = Watcher::new(&entry, tx, &http_cfg).unwrap();
 
         let value = r#"{
 	"key": "value",

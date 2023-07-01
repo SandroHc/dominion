@@ -1,11 +1,12 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::sync::mpsc::Sender;
-use tracing::info;
+use tracing::{info, trace};
 
 use watch::Watcher;
 
-use crate::config::{Config, HttpConfig, WatchEntry};
+use crate::config::{Config, WatchEntry};
 use crate::error::{DominionAsyncError, DominionError};
 
 mod config;
@@ -41,8 +42,8 @@ async fn main() -> Result<(), DominionError> {
     let urls = cfg.watch.iter().map(|w| w.url.clone()).collect();
 
     let tx = notify::prepare_notifier(&cfg).await?;
-    for entry in cfg.watch {
-        prepare_watcher(entry, tx.clone(), &cfg.http)?;
+    for entry in &cfg.watch {
+        prepare_watcher(entry, tx.clone(), &cfg)?;
     }
 
     info!("Dominion started");
@@ -67,17 +68,28 @@ fn load_config() -> Result<Config, DominionError> {
 }
 
 fn prepare_watcher(
-    entry: WatchEntry,
+    entry: &WatchEntry,
     tx: Sender<NotificationEvent>,
-    http_cfg: &HttpConfig,
+    cfg: &Config,
 ) -> Result<(), DominionError> {
     let tx_spawn = tx;
     let tx_inner = tx_spawn.clone();
 
-    let mut watcher = Watcher::new(entry.url, entry.ignore.as_slice(), tx_inner, &http_cfg)?;
     let interval = Arc::new(entry.interval);
+    let stagger = Arc::new(entry.stagger);
+    let variation = Arc::new(entry.variation);
+
+    let mut watcher = Watcher::new(entry, tx_inner, &cfg.http)?;
 
     tokio::spawn(async move {
+        // Delay initial fetch by `stagger`
+        trace!(
+            "Doing initial fetch of {} in {}",
+            watcher.url,
+            config::format_duration(&stagger)
+        );
+        tokio::time::sleep(*stagger).await;
+
         loop {
             if let Err(err) = watcher.watch().await {
                 // Handle error by sending failure notification
@@ -96,7 +108,17 @@ fn prepare_watcher(
                 }
             }
 
-            tokio::time::sleep(*interval).await;
+            // Delay next fetch by `interval` plus random variation between 0s and `variation`
+            let interval = *interval;
+            let var = interval.as_secs_f32() * (*variation) * rand::random::<f32>();
+            let var = Duration::from_secs(var as u64);
+            let next_fetch = interval + var;
+            trace!(
+                "Doing next fetch of {} in {}",
+                watcher.url,
+                config::format_duration(&next_fetch)
+            );
+            tokio::time::sleep(next_fetch).await;
         }
     });
     Ok(())

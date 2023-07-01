@@ -1,6 +1,8 @@
+use std::str::FromStr;
 use std::time::Duration;
 
 use duration_str::deserialize_duration;
+use reqwest::Method;
 use serde::{Deserialize, Serialize, Serializer};
 
 const DEFAULT_SMTP_HOST: &str = "127.0.0.1";
@@ -31,7 +33,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            notify: vec!["email".to_string()],
+            notify: vec!["email".to_string(), "discord".to_string()],
             heartbeat: Duration::from_secs(60 * 10), // 10 minutes
             http: HttpConfig::default(),
             #[cfg(feature = "discord")]
@@ -40,13 +42,23 @@ impl Default for Config {
             email: MailConfig::default(),
             watch: vec![
                 WatchEntry {
+                    protocol: "http".to_string(),
                     url: "https://example.com".to_string(),
-                    interval: Duration::from_secs(60 * 10), // 10 minutes
+                    method: Method::GET,
+                    headers: vec![],
+                    interval: Duration::from_secs(30),
+                    variation: 0.25, // 25% - 1h requests will be in the range of 1h-1h15m
+                    stagger: Duration::from_secs(5),
                     ignore: vec![],
                 },
                 WatchEntry {
+                    protocol: "http".to_string(),
                     url: "https://example2.com".to_string(),
-                    interval: Duration::from_secs(60 * 60 * 24), // 1 day
+                    method: Method::GET,
+                    headers: vec![],
+                    interval: Duration::from_secs(60 * 10), // 10 minutes
+                    variation: 0.25, // 25% - 1h requests will be in the range of 1h-1h15m
+                    stagger: Duration::from_secs(60),
                     ignore: vec![],
                 },
             ],
@@ -60,15 +72,27 @@ pub struct HttpConfig {
 }
 
 #[cfg(feature = "discord")]
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DiscordConfig {
+    pub enabled: bool,
     pub token: String,
     pub purge: bool,
+}
+
+impl Default for DiscordConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            token: "".to_string(),
+            purge: false,
+        }
+    }
 }
 
 #[cfg(feature = "email")]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MailConfig {
+    pub enabled: bool,
     pub smtp_host: String,
     #[serde(default = "default_smtp_port")]
     pub smtp_port: u16,
@@ -85,6 +109,7 @@ pub struct MailConfig {
 impl Default for MailConfig {
     fn default() -> Self {
         Self {
+            enabled: false,
             smtp_host: DEFAULT_SMTP_HOST.to_string(),
             smtp_port: DEFAULT_SMTP_PORT,
             smtp_use_tls: true,
@@ -98,20 +123,87 @@ impl Default for MailConfig {
 
 #[derive(Clone, Default, Debug, Serialize, Deserialize)]
 pub struct WatchEntry {
+    #[serde(default = "default_protocol", skip_serializing_if = "skip_protocol")]
+    pub protocol: String,
+
+    // HTTP params
     pub url: String,
+    #[serde(
+        default = "default_method",
+        skip_serializing_if = "skip_method",
+        serialize_with = "serialize_method",
+        deserialize_with = "deserialize_method"
+    )]
+    pub method: Method,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub headers: Vec<String>,
+
     #[serde(
         serialize_with = "serialize_duration",
         deserialize_with = "deserialize_duration"
     )]
     pub interval: Duration,
+    /// Variation in time, in percentage, between requests.
+    pub variation: f32,
+    /// Initial requests will be staggered a random amount between 0s and this value.
+    #[serde(
+        serialize_with = "serialize_duration",
+        deserialize_with = "deserialize_duration"
+    )]
+    pub stagger: Duration,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ignore: Vec<String>,
 }
 
-fn serialize_duration<S>(value: &Duration, s: S) -> Result<S::Ok, S::Error>
+fn default_protocol() -> String {
+    "http".to_string()
+}
+
+fn skip_protocol(value: &String) -> bool {
+    value.is_empty() || value == &default_protocol()
+}
+
+fn default_method() -> Method {
+    Method::GET
+}
+
+fn skip_method(value: &Method) -> bool {
+    value == default_method()
+}
+
+fn serialize_method<S>(value: &Method, s: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
+    s.serialize_str(value.to_string().as_str())
+}
+
+struct MethodDeserializer;
+
+impl<'de> serde::de::Visitor<'de> for MethodDeserializer {
+    type Value = Method;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("expected string, e.g. 'GET'")
+    }
+
+    fn visit_str<E>(self, s: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        let duration = Method::from_str(s).map_err(serde::de::Error::custom)?;
+        Ok(duration)
+    }
+}
+
+pub fn deserialize_method<'de, D>(deserializer: D) -> Result<Method, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserializer.deserialize_any(MethodDeserializer)
+}
+
+pub fn format_duration(value: &Duration) -> String {
     const SECS_IN_MINUTE: u64 = 60;
     const SECS_IN_HOUR: u64 = SECS_IN_MINUTE * 60;
     const SECS_IN_DAY: u64 = SECS_IN_HOUR * 24;
@@ -174,5 +266,13 @@ where
         str.push_str(format!("{nanos}ns").as_str());
     }
 
+    str
+}
+
+fn serialize_duration<S>(value: &Duration, s: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let str = format_duration(value);
     s.serialize_str(str.as_str())
 }
