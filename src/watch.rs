@@ -50,7 +50,7 @@ impl Watcher {
         if user_agent.is_empty() {
             user_agent = DEFAULT_USER_AGENT.to_string();
         }
-        trace!("Using user agent: {user_agent}");
+        debug!("Using user agent: {user_agent}");
 
         let http_client = Client::builder().user_agent(user_agent).build()?;
 

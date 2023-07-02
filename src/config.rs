@@ -22,6 +22,7 @@ pub struct Config {
         deserialize_with = "deserialize_duration"
     )]
     pub heartbeat: Duration,
+    pub log: LogConfig,
     pub http: HttpConfig,
     #[cfg(feature = "discord")]
     pub discord: DiscordConfig,
@@ -35,6 +36,11 @@ impl Default for Config {
         Self {
             notify: vec!["email".to_string(), "discord".to_string()],
             heartbeat: Duration::from_secs(60 * 10), // 10 minutes
+            log: LogConfig {
+                enabled: true,
+                level: "warn,dominion=info".to_string(),
+                file: None,
+            },
             http: HttpConfig::default(),
             #[cfg(feature = "discord")]
             discord: DiscordConfig::default(),
@@ -64,6 +70,13 @@ impl Default for Config {
             ],
         }
     }
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct LogConfig {
+    pub enabled: bool,
+    pub level: String,
+    pub file: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

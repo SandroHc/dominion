@@ -5,16 +5,18 @@ use thiserror::Error;
 pub enum DominionError {
     #[error("async error: {0}")]
     Async(#[from] DominionAsyncError),
-    #[error("request error: {0}")]
-    Request(#[from] DominionRequestError),
+    #[error("config error: {0}")]
+    Config(#[from] DominionConfigError),
     #[cfg(feature = "discord")]
     #[error("Discord error: {0}")]
     Discord(#[from] DominionDiscordError),
+    #[error("log error: {0}")]
+    Log(#[from] DominionLogError),
     #[cfg(feature = "email")]
     #[error("mail error: {0}")]
     Mail(#[from] DominionMailError),
-    #[error("configuration error: {0}")]
-    Config(#[from] confy::ConfyError),
+    #[error("request error: {0}")]
+    Request(#[from] DominionRequestError),
     #[error(transparent)]
     Unknown(#[from] Box<dyn std::error::Error + Send>),
 }
@@ -65,4 +67,28 @@ pub enum DominionMailError {
     HandlebarsTemplate(#[from] Box<handlebars::TemplateError>),
     #[error("render error: {0}")]
     HandlebarsRender(#[from] handlebars::RenderError),
+}
+
+#[derive(Error, Debug)]
+pub enum DominionConfigError {
+    #[error(transparent)]
+    Generic(#[from] confy::ConfyError),
+    #[error("could not determine home directory path")]
+    BadConfigDirectory,
+    #[error("error loading config from '{file}': {source}")]
+    Load {
+        file: String,
+        source: confy::ConfyError,
+    },
+}
+
+#[derive(Error, Debug)]
+pub enum DominionLogError {
+    #[error("init error: {0}")]
+    Init(#[from] tracing_subscriber::util::TryInitError),
+    #[error("error parsing filter '{level}': {source}")]
+    FilterParsing {
+        level: String,
+        source: tracing_subscriber::filter::ParseError,
+    },
 }
