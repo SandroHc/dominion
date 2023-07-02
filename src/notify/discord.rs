@@ -1,11 +1,17 @@
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use serenity::builder::CreateMessage;
+use serenity::gateway::Shard;
 use serenity::http::Http;
 use serenity::model::channel::{Message, PrivateChannel};
+use serenity::model::gateway::Activity;
 use serenity::model::id::UserId;
+use serenity::model::prelude::OnlineStatus;
+use serenity::prelude::GatewayIntents;
 use similar::{ChangeTag, TextDiff};
+use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 use crate::config::DiscordConfig;
@@ -14,6 +20,7 @@ use crate::notify::Heartbeat;
 
 pub struct DiscordEventHandler {
     http: Http,
+    shard: Shard,
     bot_id: UserId,
     owner_dm: PrivateChannel,
     status_msg: Option<Message>,
@@ -22,7 +29,10 @@ pub struct DiscordEventHandler {
 
 impl DiscordEventHandler {
     pub async fn new(cfg: &DiscordConfig) -> Result<DiscordEventHandler, DominionDiscordError> {
-        let http = Http::new(cfg.token.as_str());
+        let token = cfg.token.as_str();
+        let http = Http::new(token);
+        let gateway = Arc::new(Mutex::new(http.get_gateway().await?.url));
+        let mut shard = Shard::new(gateway, &token, [0u64, 1u64], GatewayIntents::empty()).await?;
 
         let bot_user = http.get_current_user().await?;
         let bot_app = http.get_current_application_info().await?;
@@ -32,13 +42,52 @@ impl DiscordEventHandler {
 
         http.set_application_id(bot_app.id.0);
 
+        let activity = Activity::listening(":globe_with_meridians:");
+        shard.set_presence(OnlineStatus::Online, Some(activity));
+
         Ok(Self {
             http,
+            shard,
             bot_id: bot_user.id,
             owner_dm,
             status_msg: None,
             purge: cfg.purge,
         })
+    }
+
+    fn get_diff(old: &str, new: &str) -> String {
+        let diff = TextDiff::from_lines(old, new);
+        let mut content = String::new();
+
+        for group in diff.grouped_ops(5) {
+            let (_, start_old_range, start_new_range) = group.first().unwrap().as_tag_tuple();
+            let (_, end_old_range, end_new_range) = group.last().unwrap().as_tag_tuple();
+
+            content += format!(
+                "@@ -{},{} +{},{} @@\n",
+                start_old_range.start,
+                end_old_range.end - start_old_range.start,
+                start_new_range.start,
+                end_new_range.end - start_new_range.start
+            )
+            .as_str();
+
+            for op in group {
+                for change in diff.iter_changes(&op) {
+                    let line = change.value();
+                    let prefix = match change.tag() {
+                        ChangeTag::Delete => "-",
+                        ChangeTag::Insert => "+",
+                        ChangeTag::Equal => " ",
+                    };
+                    let suffix = if change.missing_newline() { "\n" } else { "" };
+
+                    content += format!("{prefix}{line}{suffix}").as_str();
+                }
+            }
+        }
+
+        content
     }
 
     async fn send<'msg, M>(&self, m: M) -> Result<Message, DominionDiscordError>
@@ -96,6 +145,12 @@ impl DiscordEventHandler {
 
         info!("Purged all old messages");
     }
+
+    async fn update_presence(&mut self) {
+        if let Err(err) = self.shard.update_presence().await {
+            warn!("Failed to update presence: {err}");
+        }
+    }
 }
 
 #[async_trait]
@@ -121,39 +176,10 @@ impl crate::notify::EventHandler for DiscordEventHandler {
     }
 
     async fn on_changed(&mut self, url: &str, old: &str, new: &str) {
-        let mut content = format!("Found changes in {url}\n```patch\n");
+        let diff = DiscordEventHandler::get_diff(old, new);
+        let content = format!("Found changes in {url}\n```patch\n{diff}```");
 
-        let diff = TextDiff::from_lines(old, new);
-        for group in diff.grouped_ops(5) {
-            let (_, start_old_range, start_new_range) = group.first().unwrap().as_tag_tuple();
-            let (_, end_old_range, end_new_range) = group.last().unwrap().as_tag_tuple();
-
-            content += format!(
-                "@@ -{},{} +{},{} @@\n",
-                start_old_range.start,
-                end_old_range.end - start_old_range.start,
-                start_new_range.start,
-                end_new_range.end - start_new_range.start
-            )
-            .as_str();
-
-            for op in group {
-                for change in diff.iter_changes(&op) {
-                    let line = change.value();
-                    let prefix = match change.tag() {
-                        ChangeTag::Delete => "-",
-                        ChangeTag::Insert => "+",
-                        ChangeTag::Equal => " ",
-                    };
-                    let suffix = if change.missing_newline() { "\n" } else { "" };
-
-                    content += format!("{prefix}{line}{suffix}").as_str();
-                }
-            }
-        }
-
-        content += "```";
-
+        // TODO: trim to 2000(?) characters
         let result = self.send(|m| m.content(content)).await;
         if let Err(err) = result {
             error!("Failed to send on change message in Discord: {err}");
@@ -217,5 +243,7 @@ impl crate::notify::EventHandler for DiscordEventHandler {
         if let Some(err) = result {
             error!("Failed to update status message in Discord: {err}");
         }
+
+        self.update_presence().await;
     }
 }
