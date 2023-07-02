@@ -116,7 +116,7 @@ impl Watcher {
                         self.notifier
                             .send(NotificationEvent::Changed {
                                 url: self.url.clone(),
-                                old: prev.to_string(),
+                                old: prev.clone(),
                                 new: current.clone(),
                             })
                             .await?;

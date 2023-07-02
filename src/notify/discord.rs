@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use serenity::builder::CreateMessage;
 use serenity::gateway::Shard;
 use serenity::http::Http;
-use serenity::model::channel::{Message, PrivateChannel};
+use serenity::model::channel::{AttachmentType, Message, PrivateChannel};
 use serenity::model::gateway::Activity;
 use serenity::model::id::UserId;
 use serenity::model::prelude::OnlineStatus;
@@ -32,7 +32,7 @@ impl DiscordEventHandler {
         let token = cfg.token.as_str();
         let http = Http::new(token);
         let gateway = Arc::new(Mutex::new(http.get_gateway().await?.url));
-        let mut shard = Shard::new(gateway, &token, [0u64, 1u64], GatewayIntents::empty()).await?;
+        let mut shard = Shard::new(gateway, token, [0u64, 1u64], GatewayIntents::empty()).await?;
 
         let bot_user = http.get_current_user().await?;
         let bot_app = http.get_current_application_info().await?;
@@ -177,10 +177,30 @@ impl crate::notify::EventHandler for DiscordEventHandler {
 
     async fn on_changed(&mut self, url: &str, old: &str, new: &str) {
         let diff = DiscordEventHandler::get_diff(old, new);
-        let content = format!("Found changes in {url}\n```patch\n{diff}```");
 
-        // TODO: trim to 2000(?) characters
-        let result = self.send(|m| m.content(content)).await;
+        // Truncate diff as to not exceed Discord limit of 2000 characters per message
+        const DIFF_MAX: usize = 1850;
+        let trim_diff = diff.len() > DIFF_MAX;
+        let trimmed_diff = if trim_diff {
+            const DIFF_TRIM: &str = "\n(...)";
+            diff[0..DIFF_MAX - DIFF_TRIM.len()].to_string() + DIFF_TRIM
+        } else {
+            diff.clone()
+        };
+
+        let content = format!("Found changes in {url}\n```patch\n{trimmed_diff}```");
+
+        let mut attachments = vec![
+            AttachmentType::from((old.as_bytes(), "old.txt")),
+            AttachmentType::from((new.as_bytes(), "new.txt")),
+        ];
+        if trim_diff {
+            attachments.insert(0, AttachmentType::from((diff.as_bytes(), "diff.patch")));
+        }
+
+        let result = self
+            .send(|m| m.content(content).add_files(attachments))
+            .await;
         if let Err(err) = result {
             error!("Failed to send on change message in Discord: {err}");
         } else {
@@ -215,11 +235,11 @@ impl crate::notify::EventHandler for DiscordEventHandler {
             }
 
             if let Some(last_change) = item.last_change {
-                content += format!(", changed on <t:{last_change}:R>").as_str();
+                content += format!(", changed <t:{last_change}:R>").as_str();
             }
 
             if let Some(last_failure) = item.last_failure {
-                content += format!(", failed on <t:{last_failure}:R>").as_str();
+                content += format!(", failed <t:{last_failure}:R>").as_str();
             }
 
             content += "\n";
