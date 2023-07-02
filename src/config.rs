@@ -89,7 +89,10 @@ pub struct HttpConfig {
 pub struct DiscordConfig {
     pub enabled: bool,
     pub token: String,
+    #[serde(default)]
     pub purge: bool,
+    #[serde(default)]
+    pub purge_after: u64,
 }
 
 impl Default for DiscordConfig {
@@ -98,6 +101,7 @@ impl Default for DiscordConfig {
             enabled: false,
             token: "".to_string(),
             purge: false,
+            purge_after: 0,
         }
     }
 }

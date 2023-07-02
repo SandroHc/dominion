@@ -7,7 +7,7 @@ use serenity::http::Http;
 use serenity::model::channel::{AttachmentType, Message, PrivateChannel};
 use serenity::model::id::UserId;
 use similar::{ChangeTag, TextDiff};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::config::DiscordConfig;
 use crate::error::DominionDiscordError;
@@ -19,6 +19,7 @@ pub struct DiscordEventHandler {
     owner_dm: PrivateChannel,
     status_msg: Option<Message>,
     purge: bool,
+    purge_after: u64,
 }
 
 impl DiscordEventHandler {
@@ -40,6 +41,7 @@ impl DiscordEventHandler {
             owner_dm,
             status_msg: None,
             purge: cfg.purge,
+            purge_after: cfg.purge_after,
         })
     }
 
@@ -103,11 +105,16 @@ impl DiscordEventHandler {
             Some(last) => last,
         };
 
-        debug!("Purging Discord messages older than {last_msg_id}");
+        debug!(
+            "Purging Discord messages between {} and {last_msg_id}",
+            self.purge_after
+        );
 
         let msgs_to_delete = match self
             .owner_dm
-            .messages(&self.http, |m| m.before(last_msg_id))
+            .messages(&self.http, |m| {
+                m.after(self.purge_after).before(last_msg_id)
+            })
             .await
         {
             Ok(to_delete) => to_delete
@@ -125,6 +132,7 @@ impl DiscordEventHandler {
         };
 
         for msg_id in msgs_to_delete {
+            trace!("Purging message {msg_id}");
             if let Err(err) = self.owner_dm.id.delete_message(&self.http, msg_id).await {
                 warn!("Failed to purge message {}: {err}", msg_id);
                 return;
