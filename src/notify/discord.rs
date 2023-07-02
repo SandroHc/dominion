@@ -1,6 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
+use reqwest::StatusCode;
 use serenity::builder::CreateMessage;
 use serenity::http::Http;
 use serenity::model::channel::{AttachmentType, Message, PrivateChannel};
@@ -132,6 +133,14 @@ impl DiscordEventHandler {
 
         info!("Purged all old messages");
     }
+
+    fn trim(value: &str, max: usize) -> (&str, &str, bool) {
+        if value.len() > max {
+            (&value[0..max], "\n(...)", true)
+        } else {
+            (value, "", false)
+        }
+    }
 }
 
 #[async_trait]
@@ -160,22 +169,16 @@ impl crate::notify::EventHandler for DiscordEventHandler {
         let diff = DiscordEventHandler::get_diff(old, new);
 
         // Truncate diff as to not exceed Discord limit of 2000 characters per message
-        const DIFF_MAX: usize = 1850;
-        let trim_diff = diff.len() > DIFF_MAX;
-        let trimmed_diff = if trim_diff {
-            const DIFF_TRIM: &str = "\n(...)";
-            diff[0..DIFF_MAX - DIFF_TRIM.len()].to_string() + DIFF_TRIM
-        } else {
-            diff.clone()
-        };
+        let (diff_trimmed, diff_suffix, was_trimmed) =
+            DiscordEventHandler::trim(diff.as_str(), 1800);
 
-        let content = format!("Found changes in {url}\n```patch\n{trimmed_diff}```");
+        let content = format!("Found changes in {url}\n```patch\n{diff_trimmed}{diff_suffix}```");
 
         let mut attachments = vec![
             AttachmentType::from((old.as_bytes(), "old.txt")),
             AttachmentType::from((new.as_bytes(), "new.txt")),
         ];
-        if trim_diff {
+        if was_trimmed {
             attachments.insert(0, AttachmentType::from((diff.as_bytes(), "diff.patch")));
         }
 
@@ -189,9 +192,43 @@ impl crate::notify::EventHandler for DiscordEventHandler {
         }
     }
 
-    async fn on_failed(&mut self, url: &str, reason: &str) {
-        let content = format!("Failed to fetch {url}\n\n{reason}");
-        let result = self.send(|m| m.content(content)).await;
+    async fn on_failed(
+        &mut self,
+        url: &str,
+        reason: &str,
+        status: &Option<StatusCode>,
+        body: &Option<String>,
+    ) {
+        let mut attachments: Vec<AttachmentType> = vec![];
+
+        let content = match (reason, status, body) {
+            (_, Some(status), Some(body)) => {
+                let (body_trimmed, body_suffix, was_trimmed) =
+                    DiscordEventHandler::trim(body.as_str(), 1800);
+
+                if was_trimmed {
+                    attachments.push(AttachmentType::from((body.as_bytes(), "error.txt")));
+                }
+
+                format!("Failed to fetch {url} with status __{status}__ and body:\n```\n{body_trimmed}{body_suffix}\n```")
+            }
+            (reason, _, _) => {
+                let (reason_trimmed, reason_suffix, was_trimmed) =
+                    DiscordEventHandler::trim(reason, 1800);
+
+                if was_trimmed {
+                    attachments.push(AttachmentType::from((reason.as_bytes(), "error.txt")));
+                }
+
+                format!(
+                    "Failed to fetch {url} because of:\n```\n{reason_trimmed}{reason_suffix}\n```"
+                )
+            }
+        };
+
+        let result = self
+            .send(|m| m.content(content).add_files(attachments))
+            .await;
         if let Err(err) = result {
             error!("Failed to send failure message in Discord: {err}");
         } else {

@@ -4,6 +4,7 @@ use lettre::message::{Mailbox, SinglePart};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::transport::smtp::client::{Tls, TlsParameters};
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
+use reqwest::StatusCode;
 use serde::Serialize;
 use serde_json::json;
 use similar::{ChangeTag, TextDiff};
@@ -153,7 +154,13 @@ impl<'te> EventHandler for MailEventHandler<'te> {
         }
     }
 
-    async fn on_failed(&mut self, url: &str, reason: &str) {
+    async fn on_failed(
+        &mut self,
+        url: &str,
+        reason: &str,
+        _status: &Option<StatusCode>,
+        _body: &Option<String>,
+    ) {
         let content = format!("<p>Failed to fetch {url}</p><p>{reason}</p>");
 
         let subject = "Failed report";

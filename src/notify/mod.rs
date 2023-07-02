@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
+use reqwest::StatusCode;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::Instant;
@@ -23,7 +24,13 @@ mod mail;
 trait EventHandler {
     async fn on_startup(&mut self, urls: &[String]);
     async fn on_changed(&mut self, url: &str, old: &str, new: &str);
-    async fn on_failed(&mut self, url: &str, reason: &str);
+    async fn on_failed(
+        &mut self,
+        url: &str,
+        reason: &str,
+        status: &Option<StatusCode>,
+        body: &Option<String>,
+    );
     async fn on_heartbeat(&mut self, status: &Heartbeat);
 }
 
@@ -162,19 +169,30 @@ pub async fn prepare_notifier(cfg: &Config) -> Result<Sender<NotificationEvent>,
                         update_heartbeat(&heartbeat, url.as_str(), HeartbeatType::NoChange).await;
                         do_heartbeat(&heartbeat, &discord_handler, &mail_handler).await;
                     }
-                    NotificationEvent::Failed { url, reason } => {
+                    NotificationEvent::Failed {
+                        url,
+                        reason,
+                        status,
+                        body,
+                    } => {
                         error!("Failed to fetch {url}: {reason}");
 
                         let url = url.as_str();
-                        let reason = reason.as_str();
 
                         update_heartbeat(&heartbeat, url, HeartbeatType::Failure).await;
 
                         if let Some(discord) = discord_handler.deref() {
-                            discord.lock().await.on_failed(url, reason).await;
+                            discord
+                                .lock()
+                                .await
+                                .on_failed(url, reason.as_str(), &status, &body)
+                                .await;
                         }
                         if let Some(mail) = mail_handler.deref() {
-                            mail.lock().await.on_failed(url, reason).await;
+                            mail.lock()
+                                .await
+                                .on_failed(url, reason.as_str(), &status, &body)
+                                .await;
                         }
                     }
                 }

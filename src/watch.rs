@@ -132,12 +132,25 @@ impl Watcher {
             Err(err) => {
                 if !self.last_failed {
                     self.last_failed = true;
-                    self.notifier
-                        .send(NotificationEvent::Failed {
+
+                    let event = match &err {
+                        DominionRequestError::HttpRequestFailed { url, status, body } => {
+                            NotificationEvent::Failed {
+                                url: url.clone(),
+                                reason: format!("{err}"),
+                                status: Some(*status),
+                                body: Some(body.clone()),
+                            }
+                        }
+                        _ => NotificationEvent::Failed {
                             url: self.url.clone(),
-                            reason: format!("{}", err),
-                        })
-                        .await?;
+                            reason: format!("{err}"),
+                            status: None,
+                            body: None,
+                        },
+                    };
+
+                    self.notifier.send(event).await?;
                 }
             }
         }
@@ -156,21 +169,15 @@ impl Watcher {
 
         trace!("Fetching {}: {:?}", self.url, req);
         let res = req.send().await?;
+        let status = res.status();
         trace!("Fetched {}: {:?}", self.url, res);
-
-        if !res.status().is_success() {
-            return Err(DominionRequestError::HttpRequestFailed {
-                url: self.url.clone(),
-                status: res.status(),
-                body: res.text().await.unwrap_or_default(),
-            });
-        }
 
         let is_json = res
             .headers()
             .get(CONTENT_TYPE)
             .map(|ct| ct.to_str().unwrap_or_default().contains("json"))
             .unwrap_or(false);
+
         let text = if is_json {
             let json = res.json::<serde_json::Value>().await?;
 
@@ -183,6 +190,14 @@ impl Watcher {
         } else {
             res.text().await?
         };
+
+        if !status.is_success() {
+            return Err(DominionRequestError::HttpRequestFailed {
+                url: self.url.clone(),
+                status,
+                body: text,
+            });
+        }
 
         Ok(text)
     }

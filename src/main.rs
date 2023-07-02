@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use directories::ProjectDirs;
+use reqwest::StatusCode;
 use tokio::sync::mpsc::Sender;
 use tracing::log::LevelFilter;
 use tracing::{debug, info, trace};
@@ -39,6 +40,8 @@ pub enum NotificationEvent {
     Failed {
         url: String,
         reason: String,
+        status: Option<StatusCode>,
+        body: Option<String>,
     },
 }
 
@@ -150,6 +153,8 @@ fn prepare_watcher(
                     .send(NotificationEvent::Failed {
                         url: watcher.url.clone(),
                         reason: format!("{err}"),
+                        status: None,
+                        body: None,
                     })
                     .await;
                 if let Err(notify_err) = notify_result {
