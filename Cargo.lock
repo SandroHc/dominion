@@ -1334,7 +1334,6 @@ dependencies = [
  "bitflags",
  "bytes",
  "cfg-if",
- "flate2",
  "futures",
  "mime",
  "mime_guess",
@@ -1346,7 +1345,6 @@ dependencies = [
  "time 0.3.22",
  "tokio",
  "tracing",
- "typemap_rev",
  "url",
 ]
 
@@ -1691,12 +1689,6 @@ dependencies = [
  "url",
  "utf-8",
 ]
-
-[[package]]
-name = "typemap_rev"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed5b74f0a24b5454580a79abb6994393b09adf0ab8070f15827cb666255de155"
 
 [[package]]
 name = "typenum"

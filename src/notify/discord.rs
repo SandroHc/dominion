@@ -1,17 +1,11 @@
-use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use serenity::builder::CreateMessage;
-use serenity::gateway::Shard;
 use serenity::http::Http;
 use serenity::model::channel::{AttachmentType, Message, PrivateChannel};
-use serenity::model::gateway::Activity;
 use serenity::model::id::UserId;
-use serenity::model::prelude::OnlineStatus;
-use serenity::prelude::GatewayIntents;
 use similar::{ChangeTag, TextDiff};
-use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 use crate::config::DiscordConfig;
@@ -20,7 +14,6 @@ use crate::notify::Heartbeat;
 
 pub struct DiscordEventHandler {
     http: Http,
-    shard: Shard,
     bot_id: UserId,
     owner_dm: PrivateChannel,
     status_msg: Option<Message>,
@@ -31,8 +24,6 @@ impl DiscordEventHandler {
     pub async fn new(cfg: &DiscordConfig) -> Result<DiscordEventHandler, DominionDiscordError> {
         let token = cfg.token.as_str();
         let http = Http::new(token);
-        let gateway = Arc::new(Mutex::new(http.get_gateway().await?.url));
-        let mut shard = Shard::new(gateway, token, [0u64, 1u64], GatewayIntents::empty()).await?;
 
         let bot_user = http.get_current_user().await?;
         let bot_app = http.get_current_application_info().await?;
@@ -42,12 +33,8 @@ impl DiscordEventHandler {
 
         http.set_application_id(bot_app.id.0);
 
-        let activity = Activity::listening(":globe_with_meridians:");
-        shard.set_presence(OnlineStatus::Online, Some(activity));
-
         Ok(Self {
             http,
-            shard,
             bot_id: bot_user.id,
             owner_dm,
             status_msg: None,
@@ -144,12 +131,6 @@ impl DiscordEventHandler {
         }
 
         info!("Purged all old messages");
-    }
-
-    async fn update_presence(&mut self) {
-        if let Err(err) = self.shard.update_presence().await {
-            warn!("Failed to update presence: {err}");
-        }
     }
 }
 
@@ -263,7 +244,5 @@ impl crate::notify::EventHandler for DiscordEventHandler {
         if let Some(err) = result {
             error!("Failed to update status message in Discord: {err}");
         }
-
-        self.update_presence().await;
     }
 }
