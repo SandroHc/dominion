@@ -47,7 +47,7 @@ impl Heartbeat {
         heartbeat
     }
 
-    fn update(&mut self, url: &str, update_type: HeartbeatUpdateType) {
+    fn update(&mut self, url: &str, update_type: HeartbeatType) {
         self.dirty = true;
 
         for item in &mut self.items {
@@ -81,7 +81,7 @@ impl HeartbeatItem {
         }
     }
 
-    fn update(&mut self, update_type: HeartbeatUpdateType) {
+    fn update(&mut self, update_type: HeartbeatType) {
         let epoch = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("time went backwards")
@@ -90,18 +90,18 @@ impl HeartbeatItem {
 
         self.last_update = now;
         match update_type {
-            HeartbeatUpdateType::Change => {
+            HeartbeatType::Change => {
                 self.last_change = now;
             }
-            HeartbeatUpdateType::Failure => {
+            HeartbeatType::Failure => {
                 self.last_failure = now;
             }
-            HeartbeatUpdateType::NoChange => {}
+            HeartbeatType::NoChange => {}
         }
     }
 }
 
-enum HeartbeatUpdateType {
+enum HeartbeatType {
     Change,
     NoChange,
     Failure,
@@ -133,63 +133,48 @@ pub async fn prepare_notifier(cfg: &Config) -> Result<Sender<NotificationEvent>,
             while let Some(message) = rx.recv().await {
                 match message {
                     NotificationEvent::Startup { urls } => {
-                        if let Some(discord_handler) = discord_handler.deref() {
-                            discord_handler
-                                .lock()
-                                .await
-                                .on_startup(urls.as_slice())
-                                .await;
+                        let urls = urls.as_slice();
+
+                        if let Some(discord) = discord_handler.deref() {
+                            discord.lock().await.on_startup(urls).await;
                         }
-                        if let Some(mail_handler) = mail_handler.deref() {
-                            mail_handler.lock().await.on_startup(urls.as_slice()).await;
+                        if let Some(mail) = mail_handler.deref() {
+                            mail.lock().await.on_startup(urls).await;
                         }
                     }
                     NotificationEvent::Changed { url, old, new } => {
                         info!("Found changes in {url}");
-                        heartbeat
-                            .write()
-                            .await
-                            .update(url.as_str(), HeartbeatUpdateType::Change);
-                        if let Some(discord_handler) = discord_handler.deref() {
-                            discord_handler
-                                .lock()
-                                .await
-                                .on_changed(url.as_str(), old.as_str(), new.as_str())
-                                .await;
+
+                        let url = url.as_str();
+                        let old = old.as_str();
+                        let new = new.as_str();
+
+                        update_heartbeat(&heartbeat, url, HeartbeatType::Change).await;
+
+                        if let Some(discord) = discord_handler.deref() {
+                            discord.lock().await.on_changed(url, old, new).await;
                         }
-                        if let Some(mail_handler) = mail_handler.deref() {
-                            mail_handler
-                                .lock()
-                                .await
-                                .on_changed(url.as_str(), old.as_str(), new.as_str())
-                                .await;
+                        if let Some(mail) = mail_handler.deref() {
+                            mail.lock().await.on_changed(url, old, new).await;
                         }
                     }
                     NotificationEvent::NoChanges { url } => {
-                        heartbeat
-                            .write()
-                            .await
-                            .update(url.as_str(), HeartbeatUpdateType::NoChange);
+                        update_heartbeat(&heartbeat, url.as_str(), HeartbeatType::NoChange).await;
+                        do_heartbeat(&heartbeat, &discord_handler, &mail_handler).await;
                     }
                     NotificationEvent::Failed { url, reason } => {
                         error!("Failed to fetch {url}: {reason}");
-                        heartbeat
-                            .write()
-                            .await
-                            .update(url.as_str(), HeartbeatUpdateType::Failure);
-                        if let Some(discord_handler) = discord_handler.deref() {
-                            discord_handler
-                                .lock()
-                                .await
-                                .on_failed(url.as_str(), reason.as_str())
-                                .await;
+
+                        let url = url.as_str();
+                        let reason = reason.as_str();
+
+                        update_heartbeat(&heartbeat, url, HeartbeatType::Failure).await;
+
+                        if let Some(discord) = discord_handler.deref() {
+                            discord.lock().await.on_failed(url, reason).await;
                         }
-                        if let Some(mail_handler) = mail_handler.deref() {
-                            mail_handler
-                                .lock()
-                                .await
-                                .on_failed(url.as_str(), reason.as_str())
-                                .await;
+                        if let Some(mail) = mail_handler.deref() {
+                            mail.lock().await.on_failed(url, reason).await;
                         }
                     }
                 }
@@ -210,19 +195,11 @@ pub async fn prepare_notifier(cfg: &Config) -> Result<Sender<NotificationEvent>,
                 {
                     let heartbeat_guard = heartbeat.read().await;
 
-                    if let Some(discord_handler) = discord_handler.deref() {
-                        discord_handler
-                            .lock()
-                            .await
-                            .on_heartbeat(&heartbeat_guard)
-                            .await;
+                    if let Some(discord) = discord_handler.deref() {
+                        discord.lock().await.on_heartbeat(&heartbeat_guard).await;
                     }
-                    if let Some(mail_handler) = mail_handler.deref() {
-                        mail_handler
-                            .lock()
-                            .await
-                            .on_heartbeat(&heartbeat_guard)
-                            .await;
+                    if let Some(mail) = mail_handler.deref() {
+                        mail.lock().await.on_heartbeat(&heartbeat_guard).await;
                     }
                 }
 
@@ -235,4 +212,24 @@ pub async fn prepare_notifier(cfg: &Config) -> Result<Sender<NotificationEvent>,
     }
 
     Ok(tx)
+}
+
+async fn update_heartbeat(heartbeat: &RwLock<Heartbeat>, url: &str, update_type: HeartbeatType) {
+    heartbeat.write().await.update(url, update_type);
+}
+
+async fn do_heartbeat<'te>(
+    heartbeat: &RwLock<Heartbeat>,
+    discord: &Option<Mutex<DiscordEventHandler>>,
+    mail: &Option<Mutex<MailEventHandler<'te>>>,
+) {
+    let heartbeat_guard = heartbeat.read().await;
+
+    if let Some(discord) = discord.deref() {
+        discord.lock().await.on_heartbeat(&heartbeat_guard).await;
+    }
+
+    if let Some(mail) = mail.deref() {
+        mail.lock().await.on_heartbeat(&heartbeat_guard).await;
+    }
 }
