@@ -52,6 +52,8 @@ pub enum DominionRequestError {
 pub enum DominionDiscordError {
     #[error("serenity error: {0}")]
     Serenity(#[from] serenity::Error),
+    #[error("Discord bot does not have an owner. Please provide a user ID.")]
+    NoOwner,
 }
 
 #[cfg(feature = "email")]

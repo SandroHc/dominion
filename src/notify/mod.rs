@@ -243,11 +243,11 @@ async fn do_heartbeat<'te>(
 ) {
     let heartbeat_guard = heartbeat.read().await;
 
-    if let Some(discord) = discord.deref() {
+    if let Some(discord) = discord {
         discord.lock().await.on_heartbeat(&heartbeat_guard).await;
     }
 
-    if let Some(mail) = mail.deref() {
+    if let Some(mail) = mail {
         mail.lock().await.on_heartbeat(&heartbeat_guard).await;
     }
 }
