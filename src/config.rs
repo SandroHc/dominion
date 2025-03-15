@@ -84,10 +84,14 @@ pub struct HttpConfig {
 #[cfg(feature = "discord")]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DiscordConfig {
+    /// Enables the Discord notifier.
     pub enabled: bool,
+    /// The Discord bot token.
     pub token: String,
+    /// Whether to purge old messages on Discord.
     #[serde(default)]
     pub purge: bool,
+    /// ID of the first message to delete (exclusive).
     #[serde(default)]
     pub purge_after: u64,
 }
@@ -106,6 +110,7 @@ impl Default for DiscordConfig {
 #[cfg(feature = "email")]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MailConfig {
+    /// Enables the e-mail notifier.
     pub enabled: bool,
     pub smtp_host: String,
     #[serde(default = "default_smtp_port")]
@@ -157,7 +162,9 @@ pub struct WatchEntry {
         deserialize_with = "deserialize_duration"
     )]
     pub interval: Duration,
-    /// Variation in time, in percentage, between requests.
+    /// Variation, in percentage of the interval duration, between requests.
+    /// For example, an interval of 1h and a variation of 0.25 (25%) means that requests will be
+    /// made every 1h-1h15m.
     #[serde(default = "default_variation", skip_serializing_if = "skip_variation")]
     pub variation: f32,
     /// Initial requests will be staggered a random amount between 0s and this value.
@@ -168,6 +175,7 @@ pub struct WatchEntry {
         deserialize_with = "deserialize_duration"
     )]
     pub stagger: Duration,
+    /// Ignores any changes to the patterns provided here. Can be any regular expression.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ignore: Vec<String>,
 }
