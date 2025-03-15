@@ -1,7 +1,7 @@
 [package]
 name = "dominion"
 description = "A URL watcher that notifies you of any changes."
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Sandro Marques <sandro123iv@gmail.com>"]
 repository = "https://github.com/SandroHc/dominion"
 license = "GPL-3.0-or-later"
