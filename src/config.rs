@@ -14,8 +14,6 @@ const fn default_smtp_port() -> u16 {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
-    /// Notification methods. Not currently used.
-    pub notify: Vec<String>,
     /// Interval between heartbeats
     #[serde(
         serialize_with = "serialize_duration",
@@ -34,7 +32,6 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            notify: vec!["email".to_string(), "discord".to_string()],
             heartbeat: Duration::from_secs(60 * 10), // 10 minutes
             log: LogConfig {
                 enabled: true,
