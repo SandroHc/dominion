@@ -7,7 +7,7 @@ repository = "https://github.com/SandroHc/dominion"
 license = "GPL-3.0-or-later"
 keywords = ["watcher"]
 readme = "README.md"
-edition = "2021"
+edition = "2024"
 include = ["/debian", "/src", "LICENSE"]
 
 [dependencies]

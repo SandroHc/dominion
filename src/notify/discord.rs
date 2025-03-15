@@ -193,11 +193,13 @@ impl crate::notify::EventHandler for DiscordEventHandler {
         msg = msg.add_file(CreateAttachment::bytes(old.as_bytes(), "old.txt"));
         msg = msg.add_file(CreateAttachment::bytes(new.as_bytes(), "new.txt"));
 
-        let result = self.send(msg).await;
-        if let Err(err) = result {
-            error!("Failed to send on change message in Discord: {err}");
-        } else {
-            self.status_msg = None; // reset status message, so that a new one is sent in the next heartbeat
+        match self.send(msg).await {
+            Err(err) => {
+                error!("Failed to send on change message in Discord: {err}");
+            }
+            _ => {
+                self.status_msg = None; // reset status message, so that a new one is sent in the next heartbeat
+            }
         }
     }
 
@@ -237,10 +239,13 @@ impl crate::notify::EventHandler for DiscordEventHandler {
             }
         };
 
-        if let Err(err) = self.send(msg).await {
-            error!("Failed to send failure message in Discord: {err}");
-        } else {
-            self.status_msg = None; // reset status message, so that a new one is sent in the next heartbeat
+        match self.send(msg).await {
+            Err(err) => {
+                error!("Failed to send failure message in Discord: {err}");
+            }
+            _ => {
+                self.status_msg = None; // reset status message, so that a new one is sent in the next heartbeat
+            }
         }
     }
 
