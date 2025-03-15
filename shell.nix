@@ -22,6 +22,8 @@ in
     ];
 
     buildInputs = with pkgs; [
+      dpkg
+      cargo-deb
     ];
 
     LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath buildInputs;
